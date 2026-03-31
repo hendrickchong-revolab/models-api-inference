@@ -1,233 +1,241 @@
 # Models API Inference
 
-A comprehensive inference platform for deploying multiple ASR (Automatic Speech Recognition) models using vLLM, supporting various state-of-the-art models like Whisper, Whisper-X, and Qwen ASR.
+Docker-first ASR inference workspace that runs multiple model backends behind a single LiteLLM gateway with OpenAI-compatible transcription endpoints.
 
-## Overview
+## What This Repo Does
 
-This project provides:
-- **Multi-model ASR support**: Whisper, Whisper-X, Qwen ASR, and more
-- **vLLM inference backend**: High-performance model serving with vLLM
-- **Docker Compose setup**: Easy containerized deployment
-- **LiteLLM integration**: Unified API for model serving
-- **Configuration-driven**: YAML-based model and service configuration
+- Starts one or more ASR model services from a JSON config.
+- Generates `docker-compose.yml` and LiteLLM `config.yaml` automatically.
+- Exposes all enabled models through a single gateway at `http://localhost:4000`.
+- Verifies readiness and runs a real transcription check against each enabled model.
+
+The main entrypoint is `start_models.py`. That script is the source of truth for orchestration.
+
+## Runtime Architecture
+
+1. `config.json` defines which models are enabled, their aliases, ports, container contexts, and GPU assignments.
+2. `start_models.py` validates GPU availability and creates the external Docker network `asr-net` if needed.
+3. `start_models.py` rewrites `docker-compose.yml` for the enabled model set.
+4. `start_models.py` rewrites `config.yaml` so LiteLLM can route requests by alias.
+5. Docker Compose starts the model containers and the LiteLLM gateway.
+6. The launcher waits for `/v1/models` and model health endpoints, then sends a transcription request using `sample.wav`.
+
+The result is one gateway with model selection by alias, not by direct container URL.
 
 ## Supported Models
 
-- **Whisper MS Precise**: Malaysian Whisper Large v3 Turbo
-- **WhisperX**: Large v3 model with cross-attention
-- **Qwen ASR**: Qwen3-ASR-1.7B
-- **FireRed ASR**: Specialized ASR model
+### Enabled in the committed config
 
-## Installation
+These are enabled in `config.json` and exposed in the generated `config.yaml` currently:
 
-### Prerequisites
-- Python 3.9+
-- Docker and Docker Compose (for containerized deployment)
-- CUDA-capable GPU (recommended for optimal performance)
+| Alias | Backend | Model | Port |
+| --- | --- | --- | --- |
+| `whisper_ms_precise` | custom Whisper OpenAI-compatible server | `mesolitica/Malaysian-whisper-large-v3-turbo-v3` | `7086` |
+| `whisperx` | WhisperX API server | `large-v3` | `7090` |
+| `qwen_asr` | `vllm serve` | `Qwen/Qwen3-ASR-1.7B` | `7087` |
 
-### Setup
+### Available in `config.json` but disabled by default
 
-1. **Clone the repository**
-```bash
-git clone https://github.com/yourusername/models-api-inference.git
-cd models-api-inference
-```
+| Alias | Backend | Model | Port |
+| --- | --- | --- | --- |
+| `whisper` | custom Whisper OpenAI-compatible server | `openai/whisper-large-v3` | `7085` |
+| `glm_asr` | `vllm serve` | `zai-org/GLM-ASR-Nano-2512` | `7088` |
+| `fireredasr2s_aed` | custom FastAPI wrapper | `fireredasr2s-aed` | `7091` |
 
-2. **Create a virtual environment**
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
+## Key Files
 
-3. **Install dependencies**
-```bash
-pip install -r requirements.txt
-```
+- `start_models.py`: launcher that validates GPUs, writes generated files, starts containers, and validates inference.
+- `config.json`: editable model matrix and deployment settings.
+- `config.yaml`: generated LiteLLM config used by the gateway.
+- `docker-compose.yml`: generated compose stack for LiteLLM plus enabled model services.
+- `docker-compose.template.yml`: minimal compose template for the gateway network shape.
+- `test_litellm.py`: simple multipart transcription request against LiteLLM.
+- `qwen_requests.py`: direct chat-completions style request for Qwen ASR.
+- `models_benchmark/qwen_benchmark_requests.py`: sequential or parallel request benchmark runner.
 
-4. **Configure models**
-Edit `config.yaml` to specify which models to deploy and their configurations:
-```yaml
-model_list:
-  - model_name: whisperx
-    litellm_params:
-      model: hosted_vllm/large-v3
-      api_base: http://whisperx-srv:7090/v1
-      api_key: "sk-1234"
-```
+## Requirements
 
-## Usage
+- Docker with Compose support
+- NVIDIA GPU runtime available to Docker
+- `nvidia-smi` available on the host
+- GPUs matching the launcher constraints in `start_models.py`
 
-### Starting Models with Docker Compose
+Current launcher validation only allows GPU IDs `1`, `2`, and `3`.
 
-```bash
-python start_models.py --gpu-ids 1,2,3
-```
+## Configuration Model
 
-This will:
-- Start specified ASR models in Docker containers
-- Configure vLLM inference backends
-- Set up communication networks between services
+Edit `config.json`, not `config.yaml`, when changing which models should run.
 
-### Running Inference Requests
+Example model entry:
 
-```bash
-# Test with LiteLLM
-python test_litellm.py
-
-# Custom requests
-python qwen_requests.py
-```
-
-### API Configuration
-
-Models are served via LiteLLM with REST API endpoints. Each model gets:
-- Dedicated vLLM server instance
-- Custom API base endpoint
-- Model-specific parameters
-
-## Project Structure
-
-```
-models-api-inference/
-├── models/                    # Model implementations
-│   ├── qwen_asr.py
-│   ├── whisper_x.py
-│   ├── whisper_lev.py
-│   ├── gemini.py
-│   ├── pyannote_vad.py
-│   └── constructor/           # Model constructors
-├── models_benchmark/          # Benchmarking scripts
-├── vllm_inference_models/     # Downloaded model weights
-├── config.yaml               # Model configuration
-├── config.json               # Alternative JSON config
-├── docker-compose.yml        # Docker services
-├── start_models.py           # Model startup script
-├── test_litellm.py          # LiteLLM test client
-└── README.md                # This file
-```
-
-## Configuration
-
-### config.yaml
-
-Main configuration file for model deployment:
-
-```yaml
-model_list:
-  - model_name: <name>
-    litellm_params:
-      model: <model_identifier>
-      api_base: <vllm_server_url>
-      api_key: <api_key>
-
-general_settings:
-  disable_auth: <true/false>
-  disable_database: <true/false>
-```
-
-### Environment Variables
-
-Create a `.env` file for sensitive configuration:
-```
-API_KEY=your_api_key_here
-CUDA_VISIBLE_DEVICES=0,1,2
-LOG_LEVEL=INFO
-```
-
-## Development
-
-### Running Benchmarks
-
-```bash
-cd models_benchmark
-python qwen_benchmark_requests.py
-```
-
-### Testing
-
-```bash
-python test_litellm.py
-```
-
-## Docker Deployment
-
-The project uses Docker Compose for containerized model serving:
-
-```bash
-# Build and start services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
-```
-
-## Performance Optimization
-
-- **GPU Allocation**: Specify GPU IDs in `start_models.py` for optimal resource utilization
-- **Batch Size**: Configure via model parameters for throughput optimization
-- **Caching**: Enable KV-cache optimization in vLLM configs
-- **Quantization**: Support for model quantization (if enabled)
-
-## Troubleshooting
-
-### Model Won't Start
-- Check Docker is running and GPU access is available
-- Verify `config.yaml` syntax
-- Check logs: `docker-compose logs model-name`
-
-### API Connection Errors
-- Ensure vLLM server is running on the configured port
-- Verify network connectivity between services
-- Check firewall rules for port access
-
-### Out of Memory
-- Reduce batch size in configuration
-- Use smaller model variants
-- Enable quantization if available
-
-## Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
-
-## License
-
-[MIT License](LICENSE) - See LICENSE file for details
-
-## Citation
-
-If you use this project in your research, please cite:
-
-```bibtex
-@software{models_api_inference,
-  title={Models API Inference: Multi-Model ASR Inference Platform},
-  author={Your Name},
-  year={2026},
-  url={https://github.com/yourusername/models-api-inference}
+```json
+{
+  "name": "qwen_asr",
+  "enabled": true,
+  "compose_dir": "vllm_inference_models/qwen_asr",
+  "model_name": "Qwen/Qwen3-ASR-1.7B",
+  "port": 7087,
+  "gpu_id": 2
 }
 ```
 
-## Acknowledgments
+Important fields:
 
-- vLLM inference engine
-- LiteLLM API standardization
-- Hugging Face model hub
-- Whisper, Whisper-X, and Qwen model creators
+- `name`: alias used in LiteLLM requests as the `model` value.
+- `enabled`: whether this model is launched.
+- `compose_dir`: container build context.
+- `model_name`: upstream model identifier or runtime model name.
+- `port`: service port exposed by the container.
+- `gpu_id`: host GPU assignment.
 
-## Support
+Additional per-model keys are also used by the launcher for specific backends, such as FireRed batch settings or Whisper dtype and GPU memory utilization.
 
-For issues, questions, or feedback:
-- Open an issue on GitHub
-- Check existing documentation
-- Review benchmarks and configurations
+## Start The Stack
 
----
+From the repository root:
 
-**Last Updated**: March 2026
+```bash
+python start_models.py
+```
+
+Optional flags:
+
+```bash
+python start_models.py \
+  --config config.json \
+  --sample-audio sample.wav \
+  --litellm-url http://localhost:4000
+```
+
+What the launcher does:
+
+- loads enabled models from `config.json`
+- validates GPU availability and memory thresholds
+- ensures the external Docker network exists
+- generates `docker-compose.yml`
+- generates `config.yaml`
+- writes `.env` with the LiteLLM master key
+- starts the stack with Docker Compose
+- waits for gateway and model readiness
+- validates transcription for every enabled alias
+
+## Use The Gateway
+
+Base URL:
+
+```bash
+http://localhost:4000
+```
+
+Default API key used by the generated config:
+
+```bash
+sk-1234
+```
+
+List routed models:
+
+```bash
+curl -s \
+  -H "Authorization: Bearer sk-1234" \
+  http://localhost:4000/v1/models
+```
+
+Send an OpenAI-compatible transcription request:
+
+```bash
+curl -s http://localhost:4000/v1/audio/transcriptions \
+  -H "Authorization: Bearer sk-1234" \
+  -F file=@sample.wav \
+  -F model=qwen_asr \
+  -F response_format=json
+```
+
+Required multipart fields:
+
+- `file`
+- `model`
+
+Common optional fields:
+
+- `response_format`
+- `language`
+- `prompt`
+- `temperature`
+- `timestamp_granularities[]`
+
+## Local Test And Benchmark Scripts
+
+Test LiteLLM transcription routing:
+
+```bash
+LITELLM_MODEL=qwen_asr python test_litellm.py
+```
+
+The script defaults to `fireredasr2s_aed`, which is disabled in the committed config, so setting `LITELLM_MODEL` is recommended unless you enable FireRed.
+
+Send a direct Qwen chat-completions request:
+
+```bash
+python qwen_requests.py --audio /path/to/audio.mp3 --url http://localhost:8061/v1/chat/completions
+```
+
+Run the Qwen request benchmark:
+
+```bash
+python models_benchmark/qwen_benchmark_requests.py \
+  --audio-dir audios_test \
+  --url http://localhost:8061/v1/chat/completions \
+  --parallel 4
+```
+
+## Repository Layout
+
+```text
+.
+├── config.json
+├── config.yaml
+├── docker-compose.template.yml
+├── docker-compose.yml
+├── models/
+├── models_benchmark/
+├── qwen_requests.py
+├── start_models.py
+├── test_litellm.py
+└── vllm_inference_models/
+```
+
+Model container directories under `vllm_inference_models/`:
+
+- `whisper/`
+- `whisperx/`
+- `qwen_asr/`
+- `glm_asr/`
+- `fireredasr2s_aed/`
+
+## Notes And Caveats
+
+- `config.yaml` is generated. Treat `config.json` as the editable source of truth.
+- `docker-compose.yml` is generated by the launcher and will be overwritten.
+- LiteLLM runs with auth and database disabled in the generated config, using the fixed master key `sk-1234`.
+- FireRed support expects additional mounted model assets under `fireredasr-api/pretrained_models` when enabled.
+- WhisperX uses a dedicated CUDA API server path rather than `vllm serve`.
+
+## Troubleshooting
+
+If startup fails:
+
+- check `nvidia-smi` on the host
+- confirm Docker can access the NVIDIA runtime
+- verify enabled `compose_dir` paths exist
+- make sure the configured GPU IDs are valid for this machine
+
+If LiteLLM is up but inference fails:
+
+- call `GET /v1/models` first to confirm the alias is routed
+- use one of the enabled aliases from `config.json`
+- inspect container logs with Docker Compose for the model backend that failed
+
+## License
+
+MIT. See `LICENSE`.
