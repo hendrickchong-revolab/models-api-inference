@@ -50,5 +50,19 @@
 			"port": 7091,
 			"gpu_id": 3
 		}
+	],
+	"public_model_list": [
+		{
+			"name": "gpt-4o-transcribe",
+			"enabled": false,
+			"litellm_model": "openai/gpt-4o-transcribe",
+			"api_key_env": "OPENAI_API_KEY"
+		},
+		{
+			"name": "gemini-flash-transcribe",
+			"enabled": false,
+			"litellm_model": "gemini/gemini-2.5-flash",
+			"api_key_env": "GEMINI_API_KEY"
+		}
 	]
 }

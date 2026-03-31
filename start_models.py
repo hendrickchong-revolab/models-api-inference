@@ -35,6 +35,13 @@ class StartedModel:
 	service_name: str
 
 
+@dataclass
+class PublicModel:
+	alias: str
+	litellm_model: str
+	api_key_env: str
+
+
 def run_cmd(cmd: List[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
 	return subprocess.run(
 		cmd,
@@ -129,7 +136,7 @@ def run_compose_up(compose_file: Path, service: Optional[str] = None) -> None:
 	run_cmd(cmd)
 
 
-def write_litellm_config(workspace_root: Path, started_models: List[StartedModel]) -> Path:
+def write_litellm_config(workspace_root: Path, started_models: List[StartedModel], public_models: Optional[List["PublicModel"]] = None) -> Path:
 	lines: List[str] = ["model_list:"]
 	for model in started_models:
 		lines.extend(
@@ -139,6 +146,16 @@ def write_litellm_config(workspace_root: Path, started_models: List[StartedModel
 				f"      model: hosted_vllm/{model.model_name}",
 				f"      api_base: http://{model.container_name}:{model.port}/v1",
 				f"      api_key: \"{DEFAULT_API_KEY}\"",
+			]
+		)
+
+	for model in (public_models or []):
+		lines.extend(
+			[
+				f"  - model_name: {model.alias}",
+				"    litellm_params:",
+				f"      model: {model.litellm_model}",
+				f"      api_key: os.environ/{model.api_key_env}",
 			]
 		)
 
@@ -157,9 +174,18 @@ def write_litellm_config(workspace_root: Path, started_models: List[StartedModel
 	return config_yaml
 
 
-def ensure_litellm_env(workspace_root: Path) -> Path:
+def ensure_litellm_env(workspace_root: Path, public_models: Optional[List["PublicModel"]] = None) -> Path:
 	env_path = workspace_root / ".env"
-	write_env(env_path, {"LITELLM_MASTER_KEY": f'"{DEFAULT_API_KEY}"'})
+	# Read existing .env so we never overwrite a real API key with a placeholder
+	existing: Dict[str, str] = {}
+	if env_path.exists():
+		existing = _parse_env_lines(env_path.read_text(encoding="utf-8"))
+	env_vars: Dict[str, str] = {"LITELLM_MASTER_KEY": f'"{DEFAULT_API_KEY}"'}
+	# Only insert placeholder for keys not already present in .env
+	for env_var in sorted({m.api_key_env for m in (public_models or [])}):
+		if env_var not in existing:
+			env_vars[env_var] = ""
+	write_env(env_path, env_vars)
 	return env_path
 
 
@@ -185,7 +211,7 @@ def _relpath(path: Path, base: Path) -> str:
 		return str(path)
 
 
-def write_compose_stack(workspace_root: Path, entries: List[dict], started: List[StartedModel]) -> Path:
+def write_compose_stack(workspace_root: Path, entries: List[dict], started: List[StartedModel], public_models: Optional[List["PublicModel"]] = None) -> Path:
 	lines: List[str] = ["version: \"3.8\"", "", "services:"]
 	depends = [m.service_name for m in started]
 
@@ -201,6 +227,15 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 			"      - LITELLM_DISABLE_DATABASE=true",
 			"      - LITELLM_DISABLE_AUTH=true",
 			f"      - LITELLM_MASTER_KEY={DEFAULT_API_KEY}",
+		]
+	)
+
+	# Forward API keys for public models into the LiteLLM container
+	for env_var in sorted({m.api_key_env for m in (public_models or [])}):
+		lines.append(f"      - {env_var}=${{{env_var}}}")
+
+	lines.extend(
+		[
 			"    volumes:",
 			"      - ./config.yaml:/app/config.yaml:ro",
 			"    ports:",
@@ -482,11 +517,24 @@ def main() -> None:
 	default_min_free_mb = int(config.get("min_free_gpu_mb", 4096))
 
 	enabled = [m for m in models if bool(m.get("enabled", False))]
-	if not enabled:
+
+	public_entries = config.get("public_model_list", [])
+	enabled_public: List[PublicModel] = []
+	for entry in public_entries:
+		if not bool(entry.get("enabled", False)):
+			continue
+		alias = str(entry.get("name") or "").strip()
+		litellm_model = str(entry.get("litellm_model") or "").strip()
+		api_key_env = str(entry.get("api_key_env") or "").strip()
+		if not alias or not litellm_model or not api_key_env:
+			raise RuntimeError(f"Invalid public model entry: {entry}")
+		enabled_public.append(PublicModel(alias=alias, litellm_model=litellm_model, api_key_env=api_key_env))
+
+	if not enabled and not enabled_public:
 		raise SystemExit("No enabled models in config.json")
 
 	gpus = load_gpu_info()
-	if not gpus:
+	if enabled and not gpus:
 		raise SystemExit("nvidia-smi not available; unable to validate required GPU IDs [1,2,3]")
 
 	ensure_network(ASR_NETWORK)
@@ -526,9 +574,9 @@ def main() -> None:
 			)
 		)
 
-	compose_file = write_compose_stack(workspace_root, enabled, started_models)
-	write_litellm_config(workspace_root, started_models)
-	ensure_litellm_env(workspace_root)
+	compose_file = write_compose_stack(workspace_root, enabled, started_models, enabled_public)
+	write_litellm_config(workspace_root, started_models, enabled_public)
+	ensure_litellm_env(workspace_root, enabled_public)
 	bring_up_stack(compose_file, [m.container_name for m in started_models])
 	wait_litellm_ready(args.litellm_url)
 
@@ -539,7 +587,12 @@ def main() -> None:
 	if not sample_audio.is_absolute():
 		sample_audio = (workspace_root / sample_audio).resolve()
 
-	validate_inference(args.litellm_url, sample_audio, aliases=[m.alias for m in started_models])
+	local_aliases = [m.alias for m in started_models]
+	public_aliases = [m.alias for m in enabled_public]
+	if local_aliases:
+		validate_inference(args.litellm_url, sample_audio, aliases=local_aliases)
+	if public_aliases:
+		print(f"[info] Public models registered (not validated locally): {', '.join(public_aliases)}")
 	print("[done] All enabled models are up and inference-able through LiteLLM.")
 
 
