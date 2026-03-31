@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  litellm:
+    image: litellm/litellm:latest
+    container_name: litellm-gateway
+    platform: linux/amd64
+    entrypoint: ["litellm"]
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    env_file: .env
+    environment:
+      - LITELLM_DISABLE_DATABASE=true
+      - LITELLM_DISABLE_AUTH=true
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    ports:
+      - "4000:4000"
+    networks:
+      - asr-net
+
+networks:
+  asr-net:
+    external: true

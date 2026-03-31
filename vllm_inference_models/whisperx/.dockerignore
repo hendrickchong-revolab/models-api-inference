@@ -1,0 +1,13 @@
+__pycache__
+.git
+.gitignore
+README.md
+models
+venv
+scripts
+.vscode
+whisperx/hf-home
+whisperx/torch-home
+whisperx/test-files
+Dockerfile*
+.scannerwork

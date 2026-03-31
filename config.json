@@ -1,0 +1,54 @@
+{
+	"min_free_gpu_mb": 4096,
+	"asr_model_list": [
+		{
+			"name": "whisper",
+			"enabled": false,
+			"compose_dir": "vllm_inference_models/whisper",
+			"model_name": "openai/whisper-large-v3",
+			"port": 7085,
+			"gpu_id": 1
+		},
+		{
+			"name": "whisper_ms_precise",
+			"enabled": true,
+			"compose_dir": "vllm_inference_models/whisper",
+			"model_name": "mesolitica/Malaysian-whisper-large-v3-turbo-v3",
+			"port": 7086,
+			"gpu_id": 1
+		},
+		{
+			"name": "whisperx",
+			"enabled": true,
+			"compose_dir": "vllm_inference_models/whisperx",
+			"model_name": "large-v3",
+			"port": 7090,
+			"gpu_id": 3
+		},
+		{
+			"name": "qwen_asr",
+			"enabled": true,
+			"compose_dir": "vllm_inference_models/qwen_asr",
+			"model_name": "Qwen/Qwen3-ASR-1.7B",
+			"port": 7087,
+			"gpu_id": 2
+		},
+		{
+			"name": "glm_asr",
+			"enabled": false,
+			"compose_dir": "vllm_inference_models/glm_asr",
+			"model_name": "zai-org/GLM-ASR-Nano-2512",
+			"port": 7088,
+			"gpu_id": 3
+		},
+		{
+			"name": "fireredasr2s_aed",
+			"enabled": false,
+			"compose_dir": "vllm_inference_models/fireredasr2s_aed",
+			"model_name": "fireredasr2s-aed",
+			"firered_model_type": "aed",
+			"port": 7091,
+			"gpu_id": 3
+		}
+	]
+}

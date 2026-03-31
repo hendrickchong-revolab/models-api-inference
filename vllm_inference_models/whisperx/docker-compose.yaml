@@ -1,0 +1,43 @@
+services:
+  whisperx-api-server-cuda:
+    image: whisperx-api-server-cuda
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    container_name: ${CONTAINER_NAME:-whisperx-api-server-cuda}
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:${UVICORN_PORT:-8000}/healthcheck || exit 1"]
+    command: uvicorn --factory whisperx_api_server.main:create_app --host ${UVICORN_HOST:-0.0.0.0} --port ${UVICORN_PORT:-8000}
+    ports:
+      - "${UVICORN_PORT:-8000}:${UVICORN_PORT:-8000}"
+    environment:
+      - UVICORN_HOST=${UVICORN_HOST:-0.0.0.0}
+      - UVICORN_PORT=${UVICORN_PORT:-8000}
+      - WHISPER__MODEL=${WHISPER__MODEL:-large-v3}
+      - WHISPER__INFERENCE_DEVICE=${WHISPER__INFERENCE_DEVICE:-cuda}
+      - WHISPER__DEVICE_INDEX=${WHISPER__DEVICE_INDEX:-0}
+      - WHISPER__PRELOAD_MODEL=${WHISPER__PRELOAD_MODEL:-true}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}
+      - BATCH_MAX_SIZE=${BATCH_MAX_SIZE:-10}
+      - BATCH_WINDOW_MS=${BATCH_WINDOW_MS:-100}
+    volumes:
+      - hugging_face_cache:/home/ubuntu/.cache/huggingface
+      - torch_cache:/home/ubuntu/.cache/torch
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE_ID}"]
+              capabilities: [gpu]
+    networks:
+      - asr-net
+
+volumes:
+  hugging_face_cache:
+  torch_cache:
+
+networks:
+  asr-net:
+    external: true

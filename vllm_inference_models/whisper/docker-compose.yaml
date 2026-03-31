@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  whisper-vllm:
+    build:
+      context: .
+    container_name: ${CONTAINER_NAME:-whisper-vllm}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE_ID}"]
+              capabilities: [gpu]
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file: .env
+    volumes:
+      - "~/.cache/huggingface:/root/.cache/huggingface"
+    ports:
+      - "${PORT}:${PORT}"
+    command: python -m app.main --host 0.0.0.0 --port ${PORT} --model ${MODEL_NAME} --dtype ${DTYPE:-bfloat16} --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.3}
+    networks:
+      - asr-net
+
+networks:
+  asr-net:
+    external: true

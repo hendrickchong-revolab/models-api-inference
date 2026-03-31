@@ -1,0 +1,6 @@
+models/
+models_benchmark/
+.env
+.venv
+audios_test/
+__pycache__/

@@ -1,0 +1,19 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.9.1
+torchaudio==2.9.1
+torchvision==0.24.1
+cn2an>=0.5.23
+kaldiio>=2.18.0
+kaldi_native_fbank>=1.15
+numpy>=1.26.1
+peft>=0.13.2
+transformers>=4.51.3
+faster-whisper
+pydub
+sentencepiece
+fastapi
+uvicorn[standard]
+python-multipart
+huggingface_hub
+soundfile
+textgrid
