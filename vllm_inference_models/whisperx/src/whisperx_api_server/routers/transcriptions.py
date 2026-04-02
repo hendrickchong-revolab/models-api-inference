@@ -111,7 +111,7 @@ async def transcribe_audio(
     hotwords: Annotated[str, Form()] = None,
     suppress_numerals: Annotated[bool, Form()] = True,
     highlight_words: Annotated[bool, Form()] = False,
-    align: Annotated[bool, Form()] = True,
+    align: Annotated[bool, Form()] = False,
     diarize: Annotated[bool, Form()] = False,
     speaker_embeddings: Annotated[bool, Form()] = False,
     chunk_size: Annotated[int, Form()] = config.whisper.chunk_size,
