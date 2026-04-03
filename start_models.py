@@ -33,6 +33,8 @@ class StartedModel:
 	container_name: str
 	port: int
 	service_name: str
+	health_endpoint: str
+	model_info_endpoint: str
 
 
 @dataclass
@@ -129,13 +131,6 @@ def ensure_network(network_name: str) -> None:
 		run_cmd(["docker", "network", "create", network_name])
 
 
-def run_compose_up(compose_file: Path, service: Optional[str] = None) -> None:
-	cmd = ["docker", "compose", "-f", str(compose_file), "up", "-d", "--build"]
-	if service:
-		cmd.append(service)
-	run_cmd(cmd)
-
-
 def write_litellm_config(workspace_root: Path, started_models: List[StartedModel], public_models: Optional[List["PublicModel"]] = None) -> Path:
 	lines: List[str] = ["model_list:"]
 	for model in started_models:
@@ -190,7 +185,11 @@ def ensure_litellm_env(workspace_root: Path, public_models: Optional[List["Publi
 
 
 def start_litellm(compose_file: Path) -> None:
-	run_compose_up(compose_file, service="litellm")
+	service="litellm"
+	cmd = ["docker", "compose", "-f", str(compose_file), "up", "-d", "--build"]
+	if service:
+		cmd.append(service)
+	run_cmd(cmd)
 
 
 def remove_conflicting_containers(container_names: List[str]) -> None:
@@ -407,17 +406,21 @@ def wait_litellm_ready(base_url: str, timeout_sec: int = 180) -> None:
 	raise RuntimeError(f"LiteLLM not ready at {url}: {last_error}")
 
 
-def wait_model_ready(host: str, port: int, timeout_sec: int = 300) -> None:
+def wait_model_ready(host: str, port: int, endpoints: list, timeout_sec: int = 300) -> None:
 	base = f"{host.rstrip('/')}:{port}"
-	endpoints = ["/v1/models", "/health", "/v1/health"]
+	# this is OpenAI compatible port, so these endpoints won't be exist
+	# endpoints = ["/v1/models", "/health"]
+	# instead, use this
+	# endpoints = ["/models/list", "/healthcheck"]
 	deadline = time.time() + timeout_sec
 	last_error = "unknown error"
 
 	while time.time() < deadline:
 		for endpoint in endpoints:
+			print(f"[debug] poking endpoint {endpoint} on port {port}")
 			url = f"{base}{endpoint}"
 			try:
-				resp = requests.get(url, timeout=10)
+				resp = requests.get(url, timeout=10, headers={"Authorization": f"Bearer {DEFAULT_API_KEY}"})
 				if resp.status_code == 200:
 					return
 				last_error = f"{url} status={resp.status_code}, body={resp.text[:200]}"
@@ -528,6 +531,7 @@ def main() -> None:
 		api_key_env = str(entry.get("api_key_env") or "").strip()
 		if not alias or not litellm_model or not api_key_env:
 			raise RuntimeError(f"Invalid public model entry: {entry}")
+		print(f"[start] public model {alias}")
 		enabled_public.append(PublicModel(alias=alias, litellm_model=litellm_model, api_key_env=api_key_env))
 
 	if not enabled and not enabled_public:
@@ -559,6 +563,10 @@ def main() -> None:
 		min_free_mb = int(entry.get("min_free_gpu_mb", default_min_free_mb))
 		gpu_id = resolve_gpu(entry, gpus, min_free_mb)
 
+		# for poking post container init
+		health_endpoint = entry.get("health_endpoint", "")
+		model_info_endpoint = entry.get("model_info_endpoint", "")
+
 		safe_alias = _normalize_name(alias)
 		container_name = f"{safe_alias}-srv"
 
@@ -571,17 +579,30 @@ def main() -> None:
 				container_name=container_name,
 				port=port,
 				service_name=container_name,
+				health_endpoint=health_endpoint,
+				model_info_endpoint=model_info_endpoint
 			)
 		)
 
+	print("[info] Writing compose stack")
 	compose_file = write_compose_stack(workspace_root, enabled, started_models, enabled_public)
+
+	print("[info] Writing litellm config")
 	write_litellm_config(workspace_root, started_models, enabled_public)
+
+	print("[info] Validating litellm .env for public models")
 	ensure_litellm_env(workspace_root, enabled_public)
+
+	print("[info] Initializing litellm routing and model endpoints")
 	bring_up_stack(compose_file, [m.container_name for m in started_models])
+
+	print("[info] Poking litellm router endpoint")
 	wait_litellm_ready(args.litellm_url)
 
 	for model in started_models:
-		wait_model_ready("http://localhost", model.port)
+		print(f"[info] Poking litellm local model container")
+		endpoints = [model.model_info_endpoint, model.health_endpoint]
+		wait_model_ready("http://localhost", model.port, endpoints=endpoints)
 
 	sample_audio = Path(args.sample_audio)
 	if not sample_audio.is_absolute():
