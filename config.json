@@ -11,7 +11,7 @@
 		},
 		{
 			"name": "whisper_ms_precise",
-			"enabled": true,
+			"enabled": false,
 			"compose_dir": "vllm_inference_models/whisper",
 			"model_name": "mesolitica/Malaysian-whisper-large-v3-turbo-v3",
 			"port": 7086,
@@ -21,9 +21,11 @@
 			"name": "whisperx",
 			"enabled": true,
 			"compose_dir": "vllm_inference_models/whisperx",
-			"model_name": "large-v3",
+			"model_name": "turbo",
 			"port": 7090,
-			"gpu_id": 3
+			"gpu_id": 1,
+			"model_info_endpoint": "/models/list",
+			"health_endpoint": "/healthcheck"
 		},
 		{
 			"name": "qwen_asr",
@@ -31,7 +33,10 @@
 			"compose_dir": "vllm_inference_models/qwen_asr",
 			"model_name": "Qwen/Qwen3-ASR-1.7B",
 			"port": 7087,
-			"gpu_id": 2
+			"gpu_id": 3,
+			"model_info_endpoint": "/v1/models",
+			"health_endpoint": "/health"
+
 		},
 		{
 			"name": "glm_asr",
@@ -54,13 +59,13 @@
 	"public_model_list": [
 		{
 			"name": "gpt-4o-transcribe",
-			"enabled": false,
+			"enabled": true,
 			"litellm_model": "openai/gpt-4o-transcribe",
 			"api_key_env": "OPENAI_API_KEY"
 		},
 		{
 			"name": "gemini-flash-transcribe",
-			"enabled": false,
+			"enabled": true,
 			"litellm_model": "gemini/gemini-2.5-flash",
 			"api_key_env": "GEMINI_API_KEY"
 		}
