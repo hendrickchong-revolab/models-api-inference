@@ -611,7 +611,11 @@ def main() -> None:
 	local_aliases = [m.alias for m in started_models]
 	public_aliases = [m.alias for m in enabled_public]
 	if local_aliases:
-		validate_inference(args.litellm_url, sample_audio, aliases=local_aliases)
+		try:
+			validate_inference(args.litellm_url, sample_audio, aliases=local_aliases)
+		except FileNotFoundError:
+			raise FileNotFoundError(f"Sample audio not found {sample_audio}! Skipping local validation of inference!")
+
 	if public_aliases:
 		print(f"[info] Public models registered (not validated locally): {', '.join(public_aliases)}")
 	print("[done] All enabled models are up and inference-able through LiteLLM.")
