@@ -13,6 +13,8 @@ import requests
 DEFAULT_API_KEY = "sk-1234"
 ALLOWED_GPU_IDS = {0, 1, 2, 3}
 ASR_NETWORK = "asr-net"
+ADAPTER_PORT = 4000
+LITELLM_INTERNAL_PORT = 4099
 
 
 @dataclass
@@ -131,6 +133,14 @@ def ensure_network(network_name: str) -> None:
 		run_cmd(["docker", "network", "create", network_name])
 
 
+
+def run_compose_up(compose_file: Path, service: Optional[str] = None) -> None:
+	cmd = ["docker", "compose", "-f", str(compose_file), "up", "-d", "--build", "--force-recreate"]
+	if service:
+		cmd.append(service)
+	run_cmd(cmd)
+
+
 def write_litellm_config(workspace_root: Path, started_models: List[StartedModel], public_models: Optional[List["PublicModel"]] = None) -> Path:
 	lines: List[str] = ["model_list:"]
 	for model in started_models:
@@ -169,6 +179,24 @@ def write_litellm_config(workspace_root: Path, started_models: List[StartedModel
 	return config_yaml
 
 
+def write_adapter_config(workspace_root: Path, public_models: Optional[List["PublicModel"]] = None) -> Path:
+	"""Write adapter_config.json consumed by the asr-adapter service at runtime."""
+	# Gemini models (litellm_model starts with "gemini/") cannot use /audio/transcriptions
+	# and must be routed through /chat/completions by the adapter.
+	chat_audio_models = [
+		m.alias for m in (public_models or [])
+		if m.litellm_model.startswith("gemini/")
+	]
+	config = {
+		"litellm_base": f"http://litellm-gateway:{LITELLM_INTERNAL_PORT}",
+		"litellm_key": DEFAULT_API_KEY,
+		"chat_audio_models": chat_audio_models,
+	}
+	adapter_config = workspace_root / "adapter_config.json"
+	adapter_config.write_text(json.dumps(config, indent=2), encoding="utf-8")
+	return adapter_config
+
+
 def ensure_litellm_env(workspace_root: Path, public_models: Optional[List["PublicModel"]] = None) -> Path:
 	env_path = workspace_root / ".env"
 	# Read existing .env so we never overwrite a real API key with a placeholder
@@ -197,10 +225,15 @@ def remove_conflicting_containers(container_names: List[str]) -> None:
 		run_cmd_allow_failure(["docker", "rm", "-f", name])
 
 
+def start_adapter(compose_file: Path) -> None:
+	run_compose_up(compose_file, service="asr-adapter")
+
+
 def bring_up_stack(compose_file: Path, container_names: List[str]) -> None:
 	run_cmd_allow_failure(["docker", "compose", "-f", str(compose_file), "down", "--remove-orphans"])
 	remove_conflicting_containers(container_names)
 	start_litellm(compose_file)
+	start_adapter(compose_file)
 
 
 def _relpath(path: Path, base: Path) -> str:
@@ -237,7 +270,7 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 			"    container_name: litellm-gateway",
 			"    platform: linux/amd64",
 			"    entrypoint: [\"litellm\"]",
-			"    command: [\"--config\", \"/app/config.yaml\", \"--port\", \"4000\"]",
+			f"    command: [\"--config\", \"/app/config.yaml\", \"--port\", \"{LITELLM_INTERNAL_PORT}\"]",
 			"    environment:",
 			"      - LITELLM_DISABLE_DATABASE=true",
 			"      - LITELLM_DISABLE_AUTH=true",
@@ -251,10 +284,14 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 
 	lines.extend(
 		[
+			"    healthcheck:",
+				f"      test: [\"CMD-SHELL\", \"curl --fail http://localhost:{LITELLM_INTERNAL_PORT}/health || exit 1\"]",
+			"      interval: 30s",
+			"      timeout: 10s",
+			"      retries: 5",
+			"      start_period: 30s",
 			"    volumes:",
 			"      - ./config.yaml:/app/config.yaml:ro",
-			"    ports:",
-			"      - \"4000:4000\"",
 			"    networks:",
 			"      - asr-net",
 		]
@@ -382,6 +419,12 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 				"    build:",
 				f"      context: {context_rel}",
 				f"    container_name: {container_name}",
+				"    healthcheck:",
+				f"      test: [\"CMD-SHELL\", \"curl --fail http://localhost:{port}/health || exit 1\"]",
+				"      interval: 30s",
+				"      timeout: 10s",
+				"      retries: 5",
+				"      start_period: 120s",
 				"    deploy:",
 				"      resources:",
 				"        reservations:",
@@ -403,6 +446,31 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 
 	if whisperx_used:
 		lines.extend(["", "volumes:", "  hugging_face_cache:", "  torch_cache:"])
+
+	# asr-adapter: unified /v1/audio/transcriptions endpoint for all models
+	lines.extend(
+		[
+			"",
+			"  asr-adapter:",
+			"    build:",
+			"      context: asr_adapter",
+			"    container_name: asr-adapter",
+			"    healthcheck:",
+			f"      test: [\"CMD-SHELL\", \"curl --fail http://localhost:{ADAPTER_PORT}/health || exit 1\"]",
+			"      interval: 30s",
+			"      timeout: 10s",
+			"      retries: 3",
+			"      start_period: 15s",
+			"    volumes:",
+			"      - ./adapter_config.json:/app/adapter_config.json:ro",
+			"    ports:",
+			f"      - \"{ADAPTER_PORT}:{ADAPTER_PORT}\"",
+			"    depends_on:",
+			"      - litellm",
+			"    networks:",
+			"      - asr-net",
+		]
+	)
 
 	lines.extend(["", "networks:", "  asr-net:", "    external: true", ""])
 
@@ -613,6 +681,7 @@ def main() -> None:
 
 	print("[info] Writing litellm config")
 	write_litellm_config(workspace_root, started_models, enabled_public)
+	write_adapter_config(workspace_root, enabled_public)
 
 	print("[info] Validating litellm .env for public models")
 	ensure_litellm_env(workspace_root, enabled_public)
@@ -635,10 +704,10 @@ def main() -> None:
 	local_aliases = [m.alias for m in started_models]
 	public_aliases = [m.alias for m in enabled_public]
 	if local_aliases:
-		try:
+		if sample_audio.exists():
 			validate_inference(args.litellm_url, sample_audio, aliases=local_aliases)
-		except FileNotFoundError:
-			raise FileNotFoundError(f"Sample audio not found {sample_audio}! Skipping local validation of inference!")
+		else:
+			print(f"[warn] Sample audio not found at {sample_audio}; skipping inference validation.")
 
 	if public_aliases:
 		print(f"[info] Public models registered (not validated locally): {', '.join(public_aliases)}")

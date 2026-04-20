@@ -19,11 +19,11 @@
 		},
 		{
 			"name": "whisperx",
-			"enabled": true,
+			"enabled": false,
 			"compose_dir": "vllm_inference_models/whisperx",
 			"model_name": "turbo",
-			"port": 7090,
-			"gpu_id": 2,
+			"port": 7087,
+			"gpu_id": 1,
 			"model_info_endpoint": "/models/list",
 			"health_endpoint": "/healthcheck"
 		},
@@ -32,7 +32,7 @@
 			"enabled": true,
 			"compose_dir": "vllm_inference_models/qwen_asr",
 			"model_name": "Qwen/Qwen3-ASR-1.7B",
-			"port": 7087,
+			"port": 7088,
 			"gpu_id": 2,
 			"vllm_kwargs": {
 				"gpu_memory_utilization": 0.6,
@@ -46,7 +46,7 @@
 			"enabled": false,
 			"compose_dir": "vllm_inference_models/glm_asr",
 			"model_name": "zai-org/GLM-ASR-Nano-2512",
-			"port": 7088,
+			"port": 7089,
 			"gpu_id": 3
 		},
 		{
@@ -55,7 +55,7 @@
 			"compose_dir": "vllm_inference_models/fireredasr2s_aed",
 			"model_name": "fireredasr2s-aed",
 			"firered_model_type": "aed",
-			"port": 7091,
+			"port": 7090,
 			"gpu_id": 3
 		}
 	],
@@ -69,7 +69,7 @@
 		{
 			"name": "gemini-flash-transcribe",
 			"enabled": true,
-			"litellm_model": "gemini/gemini-2.5-flash",
+			"litellm_model": "gemini/gemini-2.0-flash",
 			"api_key_env": "GEMINI_API_KEY"
 		}
 	]

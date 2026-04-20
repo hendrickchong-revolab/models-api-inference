@@ -1,0 +1,7 @@
+{
+  "litellm_base": "http://litellm-gateway:4099",
+  "litellm_key": "sk-1234",
+  "chat_audio_models": [
+    "gemini-flash-transcribe"
+  ]
+}
