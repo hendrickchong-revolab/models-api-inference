@@ -23,7 +23,7 @@
 			"compose_dir": "vllm_inference_models/whisperx",
 			"model_name": "turbo",
 			"port": 7090,
-			"gpu_id": 1,
+			"gpu_id": 2,
 			"model_info_endpoint": "/models/list",
 			"health_endpoint": "/healthcheck"
 		},
@@ -33,10 +33,13 @@
 			"compose_dir": "vllm_inference_models/qwen_asr",
 			"model_name": "Qwen/Qwen3-ASR-1.7B",
 			"port": 7087,
-			"gpu_id": 3,
+			"gpu_id": 2,
+			"vllm_kwargs": {
+				"gpu_memory_utilization": 0.6,
+				"max_num_seqs": 16
+			},
 			"model_info_endpoint": "/v1/models",
 			"health_endpoint": "/health"
-
 		},
 		{
 			"name": "glm_asr",

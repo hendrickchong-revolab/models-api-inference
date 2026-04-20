@@ -11,7 +11,7 @@ import requests
 
 
 DEFAULT_API_KEY = "sk-1234"
-ALLOWED_GPU_IDS = {1, 2, 3}
+ALLOWED_GPU_IDS = {0, 1, 2, 3}
 ASR_NETWORK = "asr-net"
 
 
@@ -210,6 +210,22 @@ def _relpath(path: Path, base: Path) -> str:
 		return str(path)
 
 
+def cli_args_from_dict(kwargs: dict) -> str:
+    parts = []
+
+    for key, value in kwargs.items():
+        flag = f"--{key.replace('_', '-')}"
+
+        if value is None or value is False:
+            continue
+        if value is True:
+            parts.append(flag)
+        else:
+            parts.append(f"{flag} {value}")
+
+    return " ".join(parts)
+
+
 def write_compose_stack(workspace_root: Path, entries: List[dict], started: List[StartedModel], public_models: Optional[List["PublicModel"]] = None) -> Path:
 	lines: List[str] = ["version: \"3.8\"", "", "services:"]
 	depends = [m.service_name for m in started]
@@ -344,13 +360,21 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 			continue
 
 		is_whisper = "whisper" in compose_hint
-		command = f"vllm serve {model_name} --host 0.0.0.0 --port {port}"
+		vllm_kwargs = entry.get("vllm_kwargs", {})
+		gpu_mem_util = entry.get("gpu_memory_utilization", "0.3")
+
+		base_vllm_kwargs = {
+			"gpu_memory_utilization": gpu_mem_util,
+			**vllm_kwargs,
+		}
+		extra_args = cli_args_from_dict(base_vllm_kwargs)
+
+		command = f"vllm serve {model_name} --host 0.0.0.0 --port {port} {extra_args}"
 		if is_whisper:
 			dtype = entry.get("dtype", "bfloat16")
-			gpu_mem_util = entry.get("gpu_memory_utilization", "0.3")
 			command = (
 				"python -m app.main --host 0.0.0.0 --port "
-				f"{port} --model {model_name} --dtype {dtype} --gpu-memory-utilization {gpu_mem_util}"
+				f"{port} --model {model_name} --dtype {dtype} {extra_args}"
 			)
 
 		lines.extend(
