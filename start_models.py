@@ -11,7 +11,7 @@ import requests
 
 
 DEFAULT_API_KEY = "sk-1234"
-ALLOWED_GPU_IDS = {1, 2, 3}
+ALLOWED_GPU_IDS = {0, 1, 2, 3}
 ASR_NETWORK = "asr-net"
 ADAPTER_PORT = 4000
 LITELLM_INTERNAL_PORT = 4099
@@ -35,6 +35,8 @@ class StartedModel:
 	container_name: str
 	port: int
 	service_name: str
+	health_endpoint: str
+	model_info_endpoint: str
 
 
 @dataclass
@@ -131,6 +133,7 @@ def ensure_network(network_name: str) -> None:
 		run_cmd(["docker", "network", "create", network_name])
 
 
+
 def run_compose_up(compose_file: Path, service: Optional[str] = None) -> None:
 	cmd = ["docker", "compose", "-f", str(compose_file), "up", "-d", "--build", "--force-recreate"]
 	if service:
@@ -210,7 +213,11 @@ def ensure_litellm_env(workspace_root: Path, public_models: Optional[List["Publi
 
 
 def start_litellm(compose_file: Path) -> None:
-	run_compose_up(compose_file, service="litellm")
+	service="litellm"
+	cmd = ["docker", "compose", "-f", str(compose_file), "up", "-d", "--build"]
+	if service:
+		cmd.append(service)
+	run_cmd(cmd)
 
 
 def remove_conflicting_containers(container_names: List[str]) -> None:
@@ -234,6 +241,22 @@ def _relpath(path: Path, base: Path) -> str:
 		return str(path.relative_to(base))
 	except ValueError:
 		return str(path)
+
+
+def cli_args_from_dict(kwargs: dict) -> str:
+    parts = []
+
+    for key, value in kwargs.items():
+        flag = f"--{key.replace('_', '-')}"
+
+        if value is None or value is False:
+            continue
+        if value is True:
+            parts.append(flag)
+        else:
+            parts.append(f"{flag} {value}")
+
+    return " ".join(parts)
 
 
 def write_compose_stack(workspace_root: Path, entries: List[dict], started: List[StartedModel], public_models: Optional[List["PublicModel"]] = None) -> Path:
@@ -374,13 +397,21 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 			continue
 
 		is_whisper = "whisper" in compose_hint
-		command = f"vllm serve {model_name} --host 0.0.0.0 --port {port}"
+		vllm_kwargs = entry.get("vllm_kwargs", {})
+		gpu_mem_util = entry.get("gpu_memory_utilization", "0.3")
+
+		base_vllm_kwargs = {
+			"gpu_memory_utilization": gpu_mem_util,
+			**vllm_kwargs,
+		}
+		extra_args = cli_args_from_dict(base_vllm_kwargs)
+
+		command = f"vllm serve {model_name} --host 0.0.0.0 --port {port} {extra_args}"
 		if is_whisper:
 			dtype = entry.get("dtype", "bfloat16")
-			gpu_mem_util = entry.get("gpu_memory_utilization", "0.3")
 			command = (
 				"python -m app.main --host 0.0.0.0 --port "
-				f"{port} --model {model_name} --dtype {dtype} --gpu-memory-utilization {gpu_mem_util}"
+				f"{port} --model {model_name} --dtype {dtype} {extra_args}"
 			)
 
 		lines.extend(
@@ -467,17 +498,21 @@ def wait_litellm_ready(base_url: str, timeout_sec: int = 180) -> None:
 	raise RuntimeError(f"LiteLLM not ready at {url}: {last_error}")
 
 
-def wait_model_ready(host: str, port: int, timeout_sec: int = 300) -> None:
+def wait_model_ready(host: str, port: int, endpoints: list, timeout_sec: int = 300) -> None:
 	base = f"{host.rstrip('/')}:{port}"
-	endpoints = ["/v1/models", "/health", "/v1/health"]
+	# this is OpenAI compatible port, so these endpoints won't be exist
+	# endpoints = ["/v1/models", "/health"]
+	# instead, use this
+	# endpoints = ["/models/list", "/healthcheck"]
 	deadline = time.time() + timeout_sec
 	last_error = "unknown error"
 
 	while time.time() < deadline:
 		for endpoint in endpoints:
+			print(f"[debug] poking endpoint {endpoint} on port {port}")
 			url = f"{base}{endpoint}"
 			try:
-				resp = requests.get(url, timeout=10)
+				resp = requests.get(url, timeout=10, headers={"Authorization": f"Bearer {DEFAULT_API_KEY}"})
 				if resp.status_code == 200:
 					return
 				last_error = f"{url} status={resp.status_code}, body={resp.text[:200]}"
@@ -588,6 +623,7 @@ def main() -> None:
 		api_key_env = str(entry.get("api_key_env") or "").strip()
 		if not alias or not litellm_model or not api_key_env:
 			raise RuntimeError(f"Invalid public model entry: {entry}")
+		print(f"[start] public model {alias}")
 		enabled_public.append(PublicModel(alias=alias, litellm_model=litellm_model, api_key_env=api_key_env))
 
 	if not enabled and not enabled_public:
@@ -619,6 +655,10 @@ def main() -> None:
 		min_free_mb = int(entry.get("min_free_gpu_mb", default_min_free_mb))
 		gpu_id = resolve_gpu(entry, gpus, min_free_mb)
 
+		# for poking post container init
+		health_endpoint = entry.get("health_endpoint", "")
+		model_info_endpoint = entry.get("model_info_endpoint", "")
+
 		safe_alias = _normalize_name(alias)
 		container_name = f"{safe_alias}-srv"
 
@@ -631,18 +671,31 @@ def main() -> None:
 				container_name=container_name,
 				port=port,
 				service_name=container_name,
+				health_endpoint=health_endpoint,
+				model_info_endpoint=model_info_endpoint
 			)
 		)
 
+	print("[info] Writing compose stack")
 	compose_file = write_compose_stack(workspace_root, enabled, started_models, enabled_public)
+
+	print("[info] Writing litellm config")
 	write_litellm_config(workspace_root, started_models, enabled_public)
 	write_adapter_config(workspace_root, enabled_public)
+
+	print("[info] Validating litellm .env for public models")
 	ensure_litellm_env(workspace_root, enabled_public)
+
+	print("[info] Initializing litellm routing and model endpoints")
 	bring_up_stack(compose_file, [m.container_name for m in started_models])
+
+	print("[info] Poking litellm router endpoint")
 	wait_litellm_ready(args.litellm_url)
 
 	for model in started_models:
-		wait_model_ready("http://localhost", model.port)
+		print(f"[info] Poking litellm local model container")
+		endpoints = [model.model_info_endpoint, model.health_endpoint]
+		wait_model_ready("http://localhost", model.port, endpoints=endpoints)
 
 	sample_audio = Path(args.sample_audio)
 	if not sample_audio.is_absolute():
@@ -655,6 +708,7 @@ def main() -> None:
 			validate_inference(args.litellm_url, sample_audio, aliases=local_aliases)
 		else:
 			print(f"[warn] Sample audio not found at {sample_audio}; skipping inference validation.")
+
 	if public_aliases:
 		print(f"[info] Public models registered (not validated locally): {', '.join(public_aliases)}")
 	print("[done] All enabled models are up and inference-able through LiteLLM.")
