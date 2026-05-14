@@ -4,3 +4,8 @@ models_benchmark/
 .venv
 audios_test/
 __pycache__/
+
+# Auto-generated files
+adapter_config.json
+config.yaml
+docker-compose.yml
