@@ -10,10 +10,6 @@ RUN uv venv /opt/venv
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
-RUN uv pip install -U vllm --pre \
-    --extra-index-url https://wheels.vllm.ai/nightly/cu129 \
-    --extra-index-url https://download.pytorch.org/whl/cu129 \
-    --index-strategy unsafe-best-match
 RUN uv pip install "vllm[audio]"
 
 WORKDIR /workspace

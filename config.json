@@ -19,11 +19,12 @@
 		},
 		{
 			"name": "whisperx",
-			"enabled": false,
+			"enabled": true,
 			"compose_dir": "vllm_inference_models/whisperx",
 			"model_name": "turbo",
 			"port": 7087,
-			"gpu_id": 1,
+			"gpu_id": 3,
+			"batch_size": 4,
 			"model_info_endpoint": "/models/list",
 			"health_endpoint": "/healthcheck"
 		},

@@ -321,6 +321,7 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 		if "whisperx" in compose_hint:
 			whisperx_used = True
 			uvicorn_port = int(entry.get("port"))
+			batch_size = int(entry.get("batch_size", 12))
 			lines.extend(
 				[
 					"    image: whisperx-api-server-cuda",
@@ -340,6 +341,7 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 					"      - WHISPER__INFERENCE_DEVICE=cuda",
 					"      - WHISPER__DEVICE_INDEX=0",
 					"      - WHISPER__PRELOAD_MODEL=true",
+					f"      - WHISPER__BATCH_SIZE={batch_size}",
 					f"      - CUDA_VISIBLE_DEVICES={gpu_id}",
 					"    volumes:",
 					"      - hugging_face_cache:/home/ubuntu/.cache/huggingface",
@@ -444,9 +446,6 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 			]
 		)
 
-	if whisperx_used:
-		lines.extend(["", "volumes:", "  hugging_face_cache:", "  torch_cache:"])
-
 	# asr-adapter: unified /v1/audio/transcriptions endpoint for all models
 	lines.extend(
 		[
@@ -471,6 +470,9 @@ def write_compose_stack(workspace_root: Path, entries: List[dict], started: List
 			"      - asr-net",
 		]
 	)
+
+	if whisperx_used:
+		lines.extend(["", "volumes:", "  hugging_face_cache:", "  torch_cache:"])
 
 	lines.extend(["", "networks:", "  asr-net:", "    external: true", ""])
 

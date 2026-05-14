@@ -6,6 +6,9 @@ dependencies = [
     "requests",
 ]
 
+[tool.setuptools.packages.find]
+exclude = ["asr_adapter*", "vllm_inference_models*"]
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
